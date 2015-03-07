@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns:jdbc-ee="http://www.mulesoft.org/schema/mule/ee/jdbc"
+	xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans" version="EE-3.5.1"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/jdbc http://www.mulesoft.org/schema/mule/ee/jdbc/current/mule-jdbc-ee.xsd
+http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+
+  <flow name="HeartbeatFlow1" doc:name="HeartbeatFlow1">      
+		<db:select config-ref="MySQL_Configuration" doc:name="SelectHeartbeat">
+			<db:parameterized-query><![CDATA[select current_timestamp]]></db:parameterized-query>
+		</db:select>
+		<message-properties-transformer scope="session" doc:name="Message Properties">
+			<add-message-property key="heartbeatid" value="#[Integer.parseInt(0)]"/>
+		</message-properties-transformer>
+		<enricher doc:name="Message Enricher" source="#[(payload.size()&gt;0?payload[0].HeartbeatID:0)]" target="#[header:session:heartbeatid]">
+			<db:select config-ref="MySQL_Configuration" doc:name="Select_Heartbeat">
+			<db:parameterized-query><![CDATA[select HeartbeatID
+			from ECOM.Heartbeat
+			where 
+			applicationname = '${editoxml.applicationname}'
+			]]></db:parameterized-query>
+			</db:select>
+		</enricher>
+		<choice doc:name="Choice">
+			<when expression="#[(sessionVars.heartbeatid==0)]">
+			<db:insert config-ref="MySQL_Configuration" doc:name="InsertHeartbeat">
+			<db:parameterized-query><![CDATA[insert into ECOM.Heartbeat
+			(applicationname, DateUpdated)
+			values('${editoxml.applicationname}',CURRENT_TIMESTAMP)]]></db:parameterized-query>
+			</db:insert>
+			</when>
+			<otherwise>
+			<db:update config-ref="MySQL_Configuration" doc:name="Update_Heartbeat">
+			<db:parameterized-query>
+			<![CDATA[
+			update ECOM.Heartbeat
+			set DateUpdated = CURRENT_TIMESTAMP
+			where HeartbeatID = #[sessionVars.heartbeatid]		         
+			]]> 	     
+			</db:parameterized-query>		
+			</db:update>
+    		</otherwise>
+		</choice>
+        <catch-exception-strategy doc:name="Catch Exception Strategy">
+            <logger message="&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt; EDITOXML : Heartbeat error &lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;" level="INFO" doc:name="Logger"/>
+            <message-properties-transformer scope="session" doc:name="Message Properties">
+                <add-message-property key="errorprocess" value="#['EDITOXML']"/>
+                <add-message-property key="errormessage" value="#['EDITOXML Heartbeat processing failed']"/>
+                <add-message-property key="erroradditionaltext" value="#[' ']"/>
+            </message-properties-transformer>
+            <vm:outbound-endpoint exchange-pattern="request-response" path="EDITOXML.queue.VMError" doc:name="VMError"/>
+        </catch-exception-strategy>
+    </flow>
+</mule>

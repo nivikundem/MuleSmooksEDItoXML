@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking" xmlns:jdbc-ee="http://www.mulesoft.org/schema/mule/ee/jdbc"
+	xmlns:file="http://www.mulesoft.org/schema/mule/file"
+	xmlns:quartz="http://www.mulesoft.org/schema/mule/quartz"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:spring="http://www.springframework.org/schema/beans"
+	xmlns:smooks="http://www.muleforge.org/smooks/schema/mule-module-smooks" 
+	 version="EE-3.5.1"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/ee/jdbc http://www.mulesoft.org/schema/mule/ee/jdbc/current/mule-jdbc-ee.xsd
+http://www.mulesoft.org/schema/mule/file http://www.mulesoft.org/schema/mule/file/current/mule-file.xsd
+http://www.mulesoft.org/schema/mule/quartz http://www.mulesoft.org/schema/mule/quartz/current/mule-quartz.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-current.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-current.xsd
+http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.muleforge.org/smooks/schema/mule-module-smooks http://dist.muleforge.org/smooks/schema/mule-module-smooks/1.3/mule-module-smooks.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd">
+
+	<context:property-placeholder location="file:C:/JobSearch/EDI_to_XML/EDI_TO_XML/ESBPG/ProjectProperties/General.properties,file:C:/JobSearch/EDI_to_XML/EDI_TO_XML/ESBPG/ProjectProperties/DB.properties,file:C:/JobSearch/EDI_to_XML/EDI_TO_XML/ESBPG/ProjectProperties/EdiToXml.properties"/>
+	<spring:beans>
+	<spring:bean id="equityBean" name="EdiToXmlUtility" class="com.uk.editoxml.util.EdiToXmlUtility"/>
+	</spring:beans>
+	<file:connector name="File" autoDelete="true" streaming="true" validateConnections="true" doc:name="File"/>
+    
+	<!--
+	<jdbc-ee:mysql-data-source name="DS" user="${DB.user}" password="${DB.password}" url="${DB.url}" transactionIsolation="UNSPECIFIED" doc:name="MySQL Data Source"/>
+	<jdbc-ee:connector name="Database" dataSource-ref="DS" validateConnections="true" queryTimeout="-1" pollingFrequency="0" doc:name="Database"/>
+      -->
+
+	<db:mysql-config name="MySQL_Configuration" host="${DB.host}" port="${DB.port}" user="${DB.user}" password="${DB.password}" database="${DB.database}" doc:name="MySQL Configuration"/>
+
+	<flow name="UnzipFiles" doc:name="UnzipFiles" processingStrategy="synchronous">  
+		<file:inbound-endpoint path="${General.fileroot}/${editoxml.subdirectory}/${editoxml.esb.zip.folder}" responseTimeout="10000" doc:name="FileInbound" pollingFrequency="60000" connector-ref="File"/>
+		<message-properties-transformer scope="invocation"  doc:name="CommonValues">
+		<add-message-property key="zipFileName" value="#[header:filename]"/>
+		<add-message-property key="batchId" value="#[function:datestamp]"/>
+		<add-message-property key="currentPayload" value="#[payload]"/>
+		<add-message-property key="extractToDir" value="${General.fileroot}/${editoxml.subdirectory}/${General.inputdirectory}"/>
+		<add-message-property key="inputFolder" value="${General.fileroot}/${editoxml.subdirectory}/${editoxml.esb.zip.folder}"/>
+		<add-message-property key="outputFolder" value="${General.fileroot}/${editoxml.subdirectory}/${General.inputdirectory}"/>
+		</message-properties-transformer>
+		<component class="com.uk.editoxml.component.UnzipFileComponent" doc:name="Java"/>
+		<foreach collection="#[payload]" doc:name="For Each">
+			<db:insert config-ref="MySQL_Configuration" doc:name="Insert_editoxmlstatus">
+			<db:parameterized-query><![CDATA[insert into ECOM.editoxmlstatus
+			(ZipFileName,BatchId, FileName,Process, DateUpdated)
+			values(#[flowVars.zipFileName],#[flowVars.batchId],#[payload.toString()],'New',CURRENT_TIMESTAMP)]]></db:parameterized-query>
+			</db:insert>
+		</foreach> 
+		<set-payload value="#[flowVars['currentPayload']]" doc:name="Set Payload"/>
+		<file:outbound-endpoint connector-ref="File"  responseTimeout="10000" doc:name="FileOutbound" outputPattern="#[flowVars['zipFileName']]_#[function:datestamp]" path="${General.fileroot}/${editoxml.subdirectory}/${editoxml.zip.moveto.folder}" /> 
+	</flow> 
+
+
+
+	<flow name="editoxml" doc:name="editoxml">   
+		<file:inbound-endpoint responseTimeout="10000" doc:name="EdiToXmlFileInbound" path="${General.fileroot}/${editoxml.subdirectory}/${General.inputdirectory}" connector-ref="File"/> 
+		<smooks:transformer configFile="smooks-config-edi-to-xml.xml" resultType="STRING" />    
+		<file:outbound-endpoint path="${General.fileroot}/${editoxml.subdirectory}/Xml"  outputPattern="#[originalFilename].xml"   responseTimeout="10000" doc:name="edismooks" />   
+		<db:update config-ref="MySQL_Configuration" doc:name="Update_editoxmlstatus">
+		<db:parameterized-query>
+		<![CDATA[
+		update ECOM.editoxmlstatus
+		set DateUpdated = CURRENT_TIMESTAMP, process = 'Processed'
+		where FileName = #[originalFilename] and  process = 'New'		         
+		]]> 	         
+		</db:parameterized-query>		
+		</db:update>
+		<catch-exception-strategy doc:name="Catch Exception Strategy">
+			<db:update config-ref="MySQL_Configuration" doc:name="Update_editoxmlfailstatus">
+			<db:parameterized-query>
+			<![CDATA[
+			update ECOM.editoxmlstatus
+			set DateUpdated = CURRENT_TIMESTAMP, process = 'Fail'
+			where FileName = #[originalFilename] and  process = 'New'		         
+			]]> 	         
+
+			</db:parameterized-query>		
+			</db:update>
+		</catch-exception-strategy>
+	</flow> 
+		
+ <!--   <flow name="editoxml" doc:name="editoxml">     
+		<file:inbound-endpoint responseTimeout="10000" doc:name="EdiToXmlFileInbound" path="${General.fileroot}/${editoxml.subdirectory}/${General.inputdirectory}" connector-ref="File"/>
+		<logger message="#[payload]" level="INFO" doc:name="Logger"/>
+		<smooks:transformer configFile="smooks-config-edi-to-xml.xml" resultType="STRING" />    
+		<file:outbound-endpoint path="${General.fileroot}/${editoxml.subdirectory}/Xml"  outputPattern="#[originalFilename].xml"   responseTimeout="10000" doc:name="edismooks" />   
+	</flow>      -->
+	
+</mule>

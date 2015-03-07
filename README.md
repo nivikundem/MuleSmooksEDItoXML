@@ -2,7 +2,7 @@
 #Convertiong EDI to XML using smooks and MULE ESB
 
 Mule Demo for using - EDI-to-XML Project
-===================
+--------------
 Demo for converting EDI message to XML using Smooks and MULE ESB
 
 

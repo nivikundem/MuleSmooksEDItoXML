@@ -1,5 +1,5 @@
 # MuleSmooksEDItoXML
-#Convertiong EDI to XML using smooks and MULE ESB
+#Converting EDI to XML using smooks and MULE ESB
 
 Mule Demo for using - EDI-to-XML Project
 --------------
